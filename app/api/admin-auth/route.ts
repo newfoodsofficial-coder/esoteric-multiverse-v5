@@ -1,65 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const accessCode = (body?.access_code ?? '').trim();
-
-    if (!accessCode) {
-      return NextResponse.json({ error: 'Access code required' }, { status: 400 });
+    if (!supabaseUrl || !supabaseKey) {
+      return NextResponse.json({ error: 'Server configuration error.' }, { status: 500 });
     }
 
-    const supabaseUrl =
-      process.env.NEXT_PUBLIC_SUPABASE_URL ||
-      process.env.SUPABASE_URL ||
-      '';
-    const supabaseKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY ||
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-      process.env.SUPABASE_ANON_KEY ||
-      '';
-
-    if (!supabaseUrl || !supabaseKey) {
-      return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+    const { clearanceCode } = await req.json();
+    if (!clearanceCode) {
+      return NextResponse.json({ error: 'Access code required' }, { status: 400 });
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    const { data, error } = await supabase
-      .from('admins')
-      .select('id, role_title, tier, active')
-      .eq('access_code', accessCode)
-      .maybeSingle();
+    // استدعاء دالتك الأصلية والمحفوظة الخصائص بالكامل
+    const { data, error } = await supabase.rpc('verify_clearance_code', {
+      p_code: clearanceCode
+    });
 
     if (error) {
-      console.error('[admin-auth] Supabase error:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    if (!data) {
-      return NextResponse.json({ error: 'Invalid clearance code' }, { status: 401 });
-    }
+    const authResult = Array.isArray(data) ? data[0] : data;
 
-    if (!data.active) {
-      return NextResponse.json({ error: 'This clearance has been suspended' }, { status: 403 });
+    if (!authResult || !authResult.v_success) {
+      return NextResponse.json({ error: authResult?.v_error || 'Access Denied.' }, { status: 401 });
     }
 
     return NextResponse.json({
-      ok: true,
-      admin: {
-        id: data.id,
-        role_title: data.role_title,
-        tier: data.tier,
-      },
-    });
+      success: true,
+      role: authResult.v_role,
+      username: authResult.v_username
+    }, { status: 200 });
+
   } catch (err: any) {
-    console.error('[admin-auth] Error:', err);
-    return NextResponse.json({ error: err?.message ?? 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal server error.' }, { status: 500 });
   }
 }
