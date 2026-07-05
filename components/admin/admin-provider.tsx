@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { supabase, type AdminUser, type AdminTier } from '@/lib/supabase';
+import { type AdminUser, type AdminTier } from '@/lib/supabase';
 
 interface AdminState {
   tier: AdminTier | null;
@@ -54,17 +54,23 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
       const trimmed = code.trim();
       if (!trimmed) return { ok: false, error: 'Enter a clearance code.' };
 
-      const { data, error: qErr } = await supabase
-        .from('admins')
-        .select('id, role_title, tier, access_code, active')
-        .eq('access_code', trimmed)
-        .maybeSingle();
+      const res = await fetch('/api/admin-auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_code: trimmed }),
+      });
 
-      if (qErr) return { ok: false, error: 'Oracle unreachable. Try again.' };
-      if (!data) return { ok: false, error: 'Invalid clearance code.' };
-      const admin = data as AdminUser;
-      if (!admin.active) return { ok: false, error: 'This clearance has been suspended.' };
+      const data = await res.json().catch(() => ({}));
 
+      if (!res.ok) {
+        return { ok: false, error: data?.error ?? 'Oracle unreachable. Try again.' };
+      }
+
+      if (!data?.ok || !data?.admin) {
+        return { ok: false, error: 'Invalid response from server.' };
+      }
+
+      const admin = data.admin as { id: string; role_title: string; tier: AdminTier };
       setTier(admin.tier);
       setRoleTitle(admin.role_title);
       setAdminId(admin.id);
@@ -77,8 +83,9 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
         // ignore
       }
       return { ok: true };
-    } catch {
-      return { ok: false, error: 'Unexpected error during clearance.' };
+    } catch (e: any) {
+      console.error('[admin signIn] Unexpected error:', e);
+      return { ok: false, error: e?.message || 'Unexpected error during clearance.' };
     } finally {
       setLoading(false);
     }
