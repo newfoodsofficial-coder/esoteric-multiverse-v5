@@ -19,7 +19,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Server misconfigured: missing database URL' }, { status: 500 });
     }
 
-    client = new Client({ connectionString: dbUrl, connectionTimeoutMillis: 10000 });
+    client = new Client({
+      connectionString: dbUrl,
+      connectionTimeoutMillis: 10000,
+      ssl: { rejectUnauthorized: false },
+    });
     await client.connect();
 
     const result = await client.query(
