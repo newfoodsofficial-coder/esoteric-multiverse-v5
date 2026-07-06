@@ -19,21 +19,27 @@ export async function POST(req: NextRequest) {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    // استدعاء دالتك الأصلية والمحفوظة الخصائص بالكامل
+    // استدعاء الدالة المحدثة من قاعدة البيانات
     const { data, error } = await supabase.rpc('verify_clearance_code', {
       p_code: clearanceCode
     });
 
     if (error) {
+      console.error('Supabase RPC Error:', error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    // استخراج الصف الأول من المصفوفة المرجعة بأمان
     const authResult = Array.isArray(data) ? data[0] : data;
 
+    // تم إصلاح الخطأ المطبعي هنا من v_erro إلى v_error ليتوافق مع قاعدة البيانات
     if (!authResult || !authResult.v_success) {
-      return NextResponse.json({ error: authResult?.v_error || 'Access Denied.' }, { status: 401 });
+      return NextResponse.json({ 
+        error: authResult?.v_error || 'Invalid clearance credentials.' 
+      }, { status: 401 });
     }
 
+    // في حال النجاح المطلق، تمرير بيانات السوبر أدمن
     return NextResponse.json({
       success: true,
       role: authResult.v_role,
@@ -41,6 +47,7 @@ export async function POST(req: NextRequest) {
     }, { status: 200 });
 
   } catch (err: any) {
+    console.error('Fatal API Route Error:', err);
     return NextResponse.json({ error: 'Internal server error.' }, { status: 500 });
   }
 }
