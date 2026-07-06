@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { type AdminUser, type AdminTier } from '@/lib/supabase';
+import { type AdminTier } from '@/lib/supabase';
 
 interface AdminState {
   tier: AdminTier | null;
@@ -32,7 +32,6 @@ export function AdminProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Hydrate from localStorage
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);

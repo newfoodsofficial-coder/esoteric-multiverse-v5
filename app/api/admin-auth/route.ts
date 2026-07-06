@@ -1,53 +1,71 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { Client } from 'pg';
+import bcryptjs from 'bcryptjs';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
+  let client: Client | null = null;
   try {
-    if (!supabaseUrl || !supabaseKey) {
-      return NextResponse.json({ error: 'Server configuration error.' }, { status: 500 });
-    }
+    const body = await req.json();
+    const accessCode = (body?.access_code ?? body?.clearanceCode ?? '').trim();
 
-    const { clearanceCode } = await req.json();
-    if (!clearanceCode) {
+    if (!accessCode) {
       return NextResponse.json({ error: 'Access code required' }, { status: 400 });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
-
-    // استدعاء الدالة المحدثة من قاعدة البيانات
-    const { data, error } = await supabase.rpc('verify_clearance_code', {
-      p_code: clearanceCode
-    });
-
-    if (error) {
-      console.error('Supabase RPC Error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    const dbUrl = process.env.SUPABASE_DB_URL || process.env.DATABASE_URL || '';
+    if (!dbUrl) {
+      return NextResponse.json({ error: 'Server misconfigured: missing database URL' }, { status: 500 });
     }
 
-    // استخراج الصف الأول من المصفوفة المرجعة بأمان
-    const authResult = Array.isArray(data) ? data[0] : data;
+    client = new Client({
+      connectionString: dbUrl,
+      connectionTimeoutMillis: 10000,
+      ssl: { rejectUnauthorized: false },
+    });
+    await client.connect();
 
-    // تم إصلاح الخطأ المطبعي هنا من v_erro إلى v_error ليتوافق مع قاعدة البيانات
-    if (!authResult || !authResult.v_success) {
-      return NextResponse.json({ 
-        error: authResult?.v_error || 'Invalid clearance credentials.' 
-      }, { status: 401 });
+    const result = await client.query(
+      'SELECT id, role, is_active, clearance_code_hash, access_code, expires_at FROM admins WHERE is_active = true LIMIT 1'
+    );
+
+    if (result.rows.length === 0) {
+      return NextResponse.json({ error: 'Invalid clearance code' }, { status: 401 });
     }
 
-    // في حال النجاح المطلق، تمرير بيانات السوبر أدمن
+    const admin = result.rows[0];
+
+    if (admin.expires_at && new Date(admin.expires_at) < new Date()) {
+      return NextResponse.json({ error: 'This clearance has expired' }, { status: 403 });
+    }
+
+    let verified = false;
+    if (admin.access_code && admin.access_code === accessCode) {
+      verified = true;
+    } else if (admin.clearance_code_hash) {
+      verified = bcryptjs.compareSync(accessCode, admin.clearance_code_hash);
+    }
+
+    if (!verified) {
+      return NextResponse.json({ error: 'Invalid clearance code' }, { status: 401 });
+    }
+
     return NextResponse.json({
-      success: true,
-      role: authResult.v_role,
-      username: authResult.v_username
-    }, { status: 200 });
-
+      ok: true,
+      admin: {
+        id: admin.id,
+        role_title: admin.role,
+        tier: admin.role === 'super_admin' ? 'super' : 'admin',
+      },
+    });
   } catch (err: any) {
-    console.error('Fatal API Route Error:', err);
-    return NextResponse.json({ error: 'Internal server error.' }, { status: 500 });
+    console.error('[admin-auth] Error:', err);
+    return NextResponse.json({ error: err?.message ?? 'Internal server error' }, { status: 500 });
+  } finally {
+    if (client) {
+      try { await client.end(); } catch {}
+    }
   }
 }
